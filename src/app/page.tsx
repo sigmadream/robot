@@ -1,0 +1,869 @@
+'use client'
+
+import { useState, useRef, useEffect, useCallback } from 'react'
+import dynamic from 'next/dynamic'
+import Blockly from 'blockly'
+import { HumanoidJointAngles, HumanoidJointKey, DEFAULT_HUMANOID_POSE, PRESET_POSES, PresetPoseName, Position3D } from '@/lib/types/robot'
+import type { ModelType } from '@/components/Scene/RobotScene'
+import { AnimationController } from '@/lib/animationController'
+import { generateCode } from '@/lib/blockly/codeGenerator'
+import { generatePythonCode } from '@/lib/blockly/pythonGenerator'
+import { saveProject, loadProject, getAllProjects, deleteProject, saveCurrentWorkspace, loadCurrentWorkspace, SavedProject } from '@/lib/storage'
+import { EXAMPLE_PROGRAMS } from '@/lib/examples'
+import ControlPanel from '@/components/Controls/ControlPanel'
+import HumanoidJointControlPanel from '@/components/Controls/HumanoidJointControlPanel'
+import SaveDialog, { LoadDialog, ExamplesDialog } from '@/components/Dialogs/Dialogs'
+
+const RobotScene = dynamic(
+  () => import('@/components/Scene/RobotScene'),
+  { ssr: false }
+)
+
+const BlocklyWorkspace = dynamic(
+  () => import('@/components/BlocklyWorkspace/BlocklyWorkspace'),
+  { ssr: false }
+)
+
+const PythonEditor = dynamic(
+  () => import('@/components/PythonEditor/PythonEditor'),
+  { ssr: false }
+)
+
+type EditorMode = 'block' | 'python'
+
+const DEFAULT_POSITION: Position3D = { x: 0, y: 0, z: 0 }
+
+export default function Home() {
+  const [jointAngles, setJointAngles] = useState<HumanoidJointAngles>({
+    ...DEFAULT_HUMANOID_POSE
+  })
+  const [robotPosition, setRobotPosition] = useState<Position3D>({ ...DEFAULT_POSITION })
+
+  const [isRunning, setIsRunning] = useState(false)
+  const [generatedCode, setGeneratedCode] = useState('')
+  const [workspaceXml, setWorkspaceXml] = useState('')
+
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [showLoadDialog, setShowLoadDialog] = useState(false)
+  const [showExamplesDialog, setShowExamplesDialog] = useState(false)
+  const [savedProjects, setSavedProjects] = useState<SavedProject[]>([])
+  const [isWorkspaceMinimized, setIsWorkspaceMinimized] = useState(false)
+  const [modelType, setModelType] = useState<ModelType>('gundam')
+  const [executionSpeed, setExecutionSpeed] = useState(1) // 0.25 ~ 4x 속도
+  const [editorMode, setEditorMode] = useState<EditorMode>('block')
+  const [pythonCode, setPythonCode] = useState('')
+
+  const animationController = useRef(new AnimationController())
+  const executionSpeedRef = useRef(executionSpeed)
+  const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null)
+  const jointAnglesRef = useRef(jointAngles)
+  const robotPositionRef = useRef(robotPosition)
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const stopRequestedRef = useRef(false)
+
+  // jointAnglesRef를 항상 최신 상태로 유지
+  useEffect(() => {
+    jointAnglesRef.current = jointAngles
+  }, [jointAngles])
+
+  // robotPositionRef를 항상 최신 상태로 유지
+  useEffect(() => {
+    robotPositionRef.current = robotPosition
+  }, [robotPosition])
+
+  // executionSpeedRef를 항상 최신 상태로 유지
+  useEffect(() => {
+    executionSpeedRef.current = executionSpeed
+  }, [executionSpeed])
+
+  // 속도에 따른 duration 계산
+  const getAdjustedDuration = (baseDuration: number) => {
+    return baseDuration / executionSpeedRef.current
+  }
+
+  useEffect(() => {
+    const saved = loadCurrentWorkspace()
+    if (saved) {
+      setWorkspaceXml(saved)
+    }
+  }, [])
+
+  // 단일 관절 회전
+  const rotateJoint = async (joint: HumanoidJointKey, angle: number) => {
+    const currentAngles = jointAnglesRef.current
+    const targetAngles = { ...currentAngles, [joint]: angle }
+    await animationController.current.animateHumanoidJoints(
+      currentAngles,
+      targetAngles,
+      getAdjustedDuration(1000),
+      setJointAngles
+    )
+  }
+
+  // 그리퍼 설정
+  const setGripper = async (hand: 'left' | 'right', value: number) => {
+    const currentAngles = jointAnglesRef.current
+    const jointKey = hand === 'left' ? 'leftGrip' : 'rightGrip'
+    const targetAngles = { ...currentAngles, [jointKey]: value }
+    await animationController.current.animateHumanoidJoints(
+      currentAngles,
+      targetAngles,
+      getAdjustedDuration(500),
+      setJointAngles
+    )
+  }
+
+  // 머리 자세 설정
+  const setHeadPose = async (yaw: number, pitch: number) => {
+    const currentAngles = jointAnglesRef.current
+    const targetAngles = {
+      ...currentAngles,
+      neckYaw: yaw,
+      neckPitch: pitch,
+    }
+    await animationController.current.animateHumanoidJoints(
+      currentAngles,
+      targetAngles,
+      getAdjustedDuration(1000),
+      setJointAngles
+    )
+  }
+
+  // 팔 자세 설정
+  const setArmPose = async (
+    arm: 'left' | 'right',
+    shoulderPitch: number,
+    shoulderYaw: number,
+    elbow: number,
+    wrist: number
+  ) => {
+    const currentAngles = jointAnglesRef.current
+    const prefix = arm === 'left' ? 'left' : 'right'
+    const targetAngles = {
+      ...currentAngles,
+      [`${prefix}ShoulderPitch`]: shoulderPitch,
+      [`${prefix}ShoulderYaw`]: shoulderYaw,
+      [`${prefix}Elbow`]: elbow,
+      [`${prefix}Wrist`]: wrist,
+    } as HumanoidJointAngles
+    await animationController.current.animateHumanoidJoints(
+      currentAngles,
+      targetAngles,
+      getAdjustedDuration(1000),
+      setJointAngles
+    )
+  }
+
+  // 다리 자세 설정
+  const setLegPose = async (
+    leg: 'left' | 'right',
+    hipPitch: number,
+    hipYaw: number,
+    knee: number,
+    ankle: number
+  ) => {
+    const currentAngles = jointAnglesRef.current
+    const prefix = leg === 'left' ? 'left' : 'right'
+    const targetAngles = {
+      ...currentAngles,
+      [`${prefix}HipPitch`]: hipPitch,
+      [`${prefix}HipYaw`]: hipYaw,
+      [`${prefix}Knee`]: knee,
+      [`${prefix}Ankle`]: ankle,
+    } as HumanoidJointAngles
+    await animationController.current.animateHumanoidJoints(
+      currentAngles,
+      targetAngles,
+      getAdjustedDuration(1000),
+      setJointAngles
+    )
+  }
+
+  // 프리셋 자세 설정
+  const setPresetPose = async (poseName: PresetPoseName) => {
+    const currentAngles = jointAnglesRef.current
+    const targetAngles = PRESET_POSES[poseName]
+    await animationController.current.animateHumanoidJoints(
+      currentAngles,
+      targetAngles,
+      getAdjustedDuration(1000),
+      setJointAngles
+    )
+  }
+
+  // 대기 (중지 가능)
+  const wait = async (duration: number) => {
+    const adjustedDuration = duration * 1000 / executionSpeedRef.current
+    const endTime = Date.now() + adjustedDuration
+    return new Promise<void>((resolve, reject) => {
+      const check = () => {
+        if (stopRequestedRef.current) {
+          reject(new Error('STOP_REQUESTED'))
+          return
+        }
+        if (Date.now() >= endTime) {
+          resolve()
+          return
+        }
+        requestAnimationFrame(check)
+      }
+      check()
+    })
+  }
+
+  // 초기화
+  const resetRobot = async () => {
+    const currentAngles = jointAnglesRef.current
+    await animationController.current.animateHumanoidJoints(
+      currentAngles,
+      DEFAULT_HUMANOID_POSE,
+      getAdjustedDuration(1000),
+      setJointAngles
+    )
+  }
+
+  // 걷기 한 스텝 (왼발 또는 오른발)
+  const walkStep = async (isLeftStep: boolean, stepDuration: number) => {
+    const currentAngles = jointAnglesRef.current
+
+    if (isLeftStep) {
+      // 왼발 앞으로
+      const stepPose: HumanoidJointAngles = {
+        ...currentAngles,
+        leftHipPitch: 25,
+        leftKnee: 35,
+        leftAnkle: -10,
+        rightHipPitch: -15,
+        rightKnee: 5,
+        rightAnkle: 5,
+        leftShoulderPitch: -20,
+        rightShoulderPitch: 20,
+        leftShoulderYaw: 10,
+        rightShoulderYaw: -10,
+      }
+      await animationController.current.animateHumanoidJoints(
+        currentAngles,
+        stepPose,
+        stepDuration,
+        setJointAngles
+      )
+    } else {
+      // 오른발 앞으로
+      const stepPose: HumanoidJointAngles = {
+        ...currentAngles,
+        rightHipPitch: 25,
+        rightKnee: 35,
+        rightAnkle: -10,
+        leftHipPitch: -15,
+        leftKnee: 5,
+        leftAnkle: 5,
+        rightShoulderPitch: -20,
+        leftShoulderPitch: 20,
+        leftShoulderYaw: 10,
+        rightShoulderYaw: -10,
+      }
+      await animationController.current.animateHumanoidJoints(
+        currentAngles,
+        stepPose,
+        stepDuration,
+        setJointAngles
+      )
+    }
+  }
+
+  // 걷기 이동 (공통 함수)
+  const walkMove = async (deltaX: number, deltaZ: number, distance: number) => {
+    const stepDistance = 0.5 // 한 걸음당 이동 거리
+    const steps = Math.ceil(distance / stepDistance)
+    const actualStepDistance = distance / steps
+    const stepDuration = getAdjustedDuration(300) // 한 스텝 시간
+
+    const dirX = deltaX !== 0 ? deltaX / Math.abs(deltaX) : 0
+    const dirZ = deltaZ !== 0 ? deltaZ / Math.abs(deltaZ) : 0
+
+    for (let i = 0; i < steps; i++) {
+      if (stopRequestedRef.current) {
+        throw new Error('STOP_REQUESTED')
+      }
+
+      const isLeftStep = i % 2 === 0
+
+      // 걷기 동작과 이동을 동시에 실행
+      const currentPos = robotPositionRef.current
+      const stepTargetPos = {
+        x: currentPos.x + dirX * actualStepDistance * (Math.abs(deltaX) / distance || 0),
+        y: currentPos.y,
+        z: currentPos.z + dirZ * actualStepDistance * (Math.abs(deltaZ) / distance || 0),
+      }
+
+      await Promise.all([
+        walkStep(isLeftStep, stepDuration),
+        animationController.current.animatePosition(
+          currentPos,
+          stepTargetPos,
+          stepDuration,
+          setRobotPosition
+        )
+      ])
+    }
+
+    // 걷기 종료 후 기본 자세로
+    const currentAngles = jointAnglesRef.current
+    const standPose: HumanoidJointAngles = {
+      ...currentAngles,
+      leftHipPitch: 0,
+      leftKnee: 0,
+      leftAnkle: 0,
+      rightHipPitch: 0,
+      rightKnee: 0,
+      rightAnkle: 0,
+      leftShoulderPitch: 0,
+      rightShoulderPitch: 0,
+      leftShoulderYaw: 10,
+      rightShoulderYaw: -10,
+    }
+    await animationController.current.animateHumanoidJoints(
+      currentAngles,
+      standPose,
+      getAdjustedDuration(200),
+      setJointAngles
+    )
+  }
+
+  // 앞으로 이동 (걷기)
+  const moveForward = async (distance: number) => {
+    await walkMove(0, -distance, distance)
+  }
+
+  // 뒤로 이동 (걷기)
+  const moveBackward = async (distance: number) => {
+    await walkMove(0, distance, distance)
+  }
+
+  // 왼쪽으로 이동 (걷기)
+  const moveLeft = async (distance: number) => {
+    await walkMove(-distance, 0, distance)
+  }
+
+  // 오른쪽으로 이동 (걷기)
+  const moveRight = async (distance: number) => {
+    await walkMove(distance, 0, distance)
+  }
+
+  // 점프
+  const jump = async (height: number) => {
+    const currentPos = robotPositionRef.current
+    await animationController.current.animateJump(
+      currentPos,
+      height,
+      getAdjustedDuration(800),
+      setRobotPosition
+    )
+  }
+
+  // 위치 초기화
+  const resetPosition = async () => {
+    const currentPos = robotPositionRef.current
+    await animationController.current.animatePosition(
+      currentPos,
+      DEFAULT_POSITION,
+      getAdjustedDuration(1000),
+      setRobotPosition
+    )
+  }
+
+  // 관절 직접 변경 (컨트롤 패널용)
+  const handleJointChange = (joint: HumanoidJointKey, value: number) => {
+    setJointAngles(prev => ({ ...prev, [joint]: value }))
+  }
+
+  // 프리셋 자세 직접 적용 (컨트롤 패널용)
+  const handlePresetPose = (poseName: PresetPoseName) => {
+    setPresetPose(poseName)
+  }
+
+  // 중지 체크 함수
+  const checkStop = () => {
+    if (stopRequestedRef.current) {
+      throw new Error('STOP_REQUESTED')
+    }
+  }
+
+  // 중지 기능이 있는 래퍼 함수들
+  const wrappedRotateJoint = async (joint: HumanoidJointKey, angle: number) => {
+    checkStop()
+    await rotateJoint(joint, angle)
+  }
+
+  const wrappedSetGripper = async (hand: 'left' | 'right', value: number) => {
+    checkStop()
+    await setGripper(hand, value)
+  }
+
+  const wrappedSetHeadPose = async (yaw: number, pitch: number) => {
+    checkStop()
+    await setHeadPose(yaw, pitch)
+  }
+
+  const wrappedSetArmPose = async (arm: 'left' | 'right', sp: number, sy: number, e: number, w: number) => {
+    checkStop()
+    await setArmPose(arm, sp, sy, e, w)
+  }
+
+  const wrappedSetLegPose = async (leg: 'left' | 'right', hp: number, hy: number, k: number, a: number) => {
+    checkStop()
+    await setLegPose(leg, hp, hy, k, a)
+  }
+
+  const wrappedSetPresetPose = async (poseName: PresetPoseName) => {
+    checkStop()
+    await setPresetPose(poseName)
+  }
+
+  const wrappedWait = async (duration: number) => {
+    checkStop()
+    await wait(duration)
+  }
+
+  const wrappedResetRobot = async () => {
+    checkStop()
+    await resetRobot()
+  }
+
+  const wrappedMoveForward = async (distance: number) => {
+    checkStop()
+    await moveForward(distance)
+  }
+
+  const wrappedMoveBackward = async (distance: number) => {
+    checkStop()
+    await moveBackward(distance)
+  }
+
+  const wrappedMoveLeft = async (distance: number) => {
+    checkStop()
+    await moveLeft(distance)
+  }
+
+  const wrappedMoveRight = async (distance: number) => {
+    checkStop()
+    await moveRight(distance)
+  }
+
+  const wrappedJump = async (height: number) => {
+    checkStop()
+    await jump(height)
+  }
+
+  const wrappedResetPosition = async () => {
+    checkStop()
+    await resetPosition()
+  }
+
+  const executeBlockCode = async () => {
+    if (!workspaceRef.current) return
+
+    stopRequestedRef.current = false
+    animationController.current.reset()
+    setIsRunning(true)
+    const code = generateCode(workspaceRef.current)
+    setGeneratedCode(code)
+
+    try {
+      const asyncFunction = new Function(
+        'rotateJoint',
+        'setGripper',
+        'setHeadPose',
+        'setArmPose',
+        'setLegPose',
+        'setPresetPose',
+        'wait',
+        'resetRobot',
+        'moveForward',
+        'moveBackward',
+        'moveLeft',
+        'moveRight',
+        'jump',
+        'resetPosition',
+        `return (async () => { ${code} })()`
+      )
+
+      await asyncFunction(
+        wrappedRotateJoint,
+        wrappedSetGripper,
+        wrappedSetHeadPose,
+        wrappedSetArmPose,
+        wrappedSetLegPose,
+        wrappedSetPresetPose,
+        wrappedWait,
+        wrappedResetRobot,
+        wrappedMoveForward,
+        wrappedMoveBackward,
+        wrappedMoveLeft,
+        wrappedMoveRight,
+        wrappedJump,
+        wrappedResetPosition
+      )
+    } catch (error) {
+      if ((error as Error).message !== 'STOP_REQUESTED') {
+        console.error('코드 실행 오류:', error)
+        alert('코드 실행 중 오류가 발생했습니다.')
+      }
+    }
+
+    setIsRunning(false)
+  }
+
+  // Python 코드 실행 (Python 문법을 JavaScript로 변환하여 실행)
+  const executePythonCode = async (code: string): Promise<void> => {
+    stopRequestedRef.current = false
+    animationController.current.reset()
+    setIsRunning(true)
+
+    try {
+      // Python await 문법을 JavaScript로 변환
+      // await function_name('arg1', arg2) -> await function_name('arg1', arg2)
+      // Python과 JavaScript 문법이 유사하므로 대부분 그대로 실행 가능
+      const jsCode = code
+        .replace(/rotate_joint/g, 'rotateJoint')
+        .replace(/set_gripper/g, 'setGripper')
+        .replace(/set_head_pose/g, 'setHeadPose')
+        .replace(/set_arm_pose/g, 'setArmPose')
+        .replace(/set_leg_pose/g, 'setLegPose')
+        .replace(/set_preset_pose/g, 'setPresetPose')
+        .replace(/reset_robot/g, 'resetRobot')
+        .replace(/move_forward/g, 'moveForward')
+        .replace(/move_backward/g, 'moveBackward')
+        .replace(/move_left/g, 'moveLeft')
+        .replace(/move_right/g, 'moveRight')
+        .replace(/reset_position/g, 'resetPosition')
+
+      const asyncFunction = new Function(
+        'rotateJoint',
+        'setGripper',
+        'setHeadPose',
+        'setArmPose',
+        'setLegPose',
+        'setPresetPose',
+        'wait',
+        'resetRobot',
+        'moveForward',
+        'moveBackward',
+        'moveLeft',
+        'moveRight',
+        'jump',
+        'resetPosition',
+        `return (async () => { ${jsCode} })()`
+      )
+
+      await asyncFunction(
+        wrappedRotateJoint,
+        wrappedSetGripper,
+        wrappedSetHeadPose,
+        wrappedSetArmPose,
+        wrappedSetLegPose,
+        wrappedSetPresetPose,
+        wrappedWait,
+        wrappedResetRobot,
+        wrappedMoveForward,
+        wrappedMoveBackward,
+        wrappedMoveLeft,
+        wrappedMoveRight,
+        wrappedJump,
+        wrappedResetPosition
+      )
+    } catch (error) {
+      if ((error as Error).message !== 'STOP_REQUESTED') {
+        console.error('Python 코드 실행 오류:', error)
+        throw error
+      }
+    }
+
+    setIsRunning(false)
+  }
+
+  const stopExecution = () => {
+    stopRequestedRef.current = true
+    animationController.current.stop()
+    setIsRunning(false)
+  }
+
+  const handleWorkspaceChange = useCallback((workspace: Blockly.WorkspaceSvg) => {
+    workspaceRef.current = workspace
+
+    // 디바운싱: 블록 이동 중 너무 잦은 업데이트 방지
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      const code = generateCode(workspace)
+      setGeneratedCode(code)
+
+      const pyCode = generatePythonCode(workspace)
+      setPythonCode(pyCode)
+
+      const xml = Blockly.Xml.workspaceToDom(workspace)
+      const xmlText = Blockly.Xml.domToText(xml)
+      saveCurrentWorkspace(xmlText)
+    }, 150)
+  }, [])
+
+  const handleSaveProject = (name: string) => {
+    if (workspaceRef.current) {
+      const xml = Blockly.Xml.workspaceToDom(workspaceRef.current)
+      const xmlText = Blockly.Xml.domToText(xml)
+      saveProject(name, xmlText, jointAngles as any)
+      alert(`"${name}" 프로젝트가 저장되었습니다!`)
+    }
+  }
+
+  const handleLoadProject = (project: SavedProject) => {
+    setWorkspaceXml(project.workspace)
+    if (project.initialJointAngles) {
+      // 레거시 프로젝트 호환성 처리
+      const loaded = project.initialJointAngles as any
+      if ('base' in loaded) {
+        // 레거시 포맷인 경우 기본 자세로
+        setJointAngles({ ...DEFAULT_HUMANOID_POSE })
+      } else {
+        setJointAngles(loaded as HumanoidJointAngles)
+      }
+    }
+  }
+
+  const handleDeleteProject = (name: string) => {
+    deleteProject(name)
+    setSavedProjects(getAllProjects())
+  }
+
+  const handleLoadExample = (xml: string) => {
+    setWorkspaceXml(xml)
+  }
+
+  const handleClearWorkspace = () => {
+    if (confirm('블록 코딩 영역을 초기화하시겠습니까?\n모든 블록이 삭제됩니다.')) {
+      if (workspaceRef.current) {
+        workspaceRef.current.clear()
+        setGeneratedCode('')
+        saveCurrentWorkspace('')
+      }
+    }
+  }
+
+  return (
+    <main className="flex h-screen flex-col bg-gray-900">
+      <header className="bg-gray-800 border-b border-gray-700 px-6 py-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">
+            로봇 블록 코딩 시뮬레이터
+          </h1>
+          <p className="text-sm text-gray-400 mt-1">
+            블록을 조립해서 22관절 휴머노이드 로봇을 제어하세요
+          </p>
+        </div>
+
+        <ControlPanel
+          isRunning={isRunning}
+          onRun={editorMode === 'block' ? executeBlockCode : () => executePythonCode(pythonCode)}
+          onStop={stopExecution}
+          onReset={() => {
+            stopRequestedRef.current = true
+            animationController.current.stop()
+            setIsRunning(false)
+            setJointAngles({ ...DEFAULT_HUMANOID_POSE })
+            setRobotPosition({ ...DEFAULT_POSITION })
+          }}
+          onExamples={() => setShowExamplesDialog(true)}
+          onClearWorkspace={handleClearWorkspace}
+          executionSpeed={executionSpeed}
+          onSpeedChange={setExecutionSpeed}
+        />
+      </header>
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* 블록 코딩 / Python 에디터 영역 */}
+        <div
+          className={`border-r border-gray-700 flex flex-col transition-all duration-300 ${
+            isWorkspaceMinimized ? 'w-12' : 'w-1/2'
+          }`}
+        >
+          <div className="bg-gray-800 px-4 py-2 border-b border-gray-700 flex items-center justify-between">
+            {!isWorkspaceMinimized && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setEditorMode('block')}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-t transition-colors ${
+                    editorMode === 'block'
+                      ? 'bg-gray-700 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                  }`}
+                >
+                  블록 코딩
+                </button>
+                <button
+                  onClick={() => setEditorMode('python')}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-t transition-colors ${
+                    editorMode === 'python'
+                      ? 'bg-gray-700 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                  }`}
+                >
+                  Python
+                </button>
+              </div>
+            )}
+            <button
+              onClick={() => setIsWorkspaceMinimized(!isWorkspaceMinimized)}
+              className="p-1.5 hover:bg-gray-700 rounded transition-colors text-gray-400 hover:text-white"
+              title={isWorkspaceMinimized ? '에디터 창 펼치기' : '에디터 창 최소화'}
+            >
+              {isWorkspaceMinimized ? (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                </svg>
+              )}
+            </button>
+          </div>
+          <div className="flex-1 relative overflow-hidden">
+            {/* Blockly 워크스페이스 */}
+            <div
+              className={`absolute inset-0 transition-opacity duration-300 ${
+                isWorkspaceMinimized || editorMode !== 'block' ? 'opacity-0 pointer-events-none' : 'opacity-100'
+              }`}
+              key={workspaceXml}
+            >
+              <BlocklyWorkspace
+                onWorkspaceChange={handleWorkspaceChange}
+                initialXml={workspaceXml}
+              />
+            </div>
+            {/* Python 에디터 */}
+            <div
+              className={`absolute inset-0 transition-opacity duration-300 ${
+                isWorkspaceMinimized || editorMode !== 'python' ? 'opacity-0 pointer-events-none' : 'opacity-100'
+              }`}
+            >
+              <PythonEditor
+                initialCode=""
+                generatedCode={pythonCode}
+                onRunCode={executePythonCode}
+                isRunning={isRunning}
+                onCodeChange={(code) => setPythonCode(code)}
+              />
+            </div>
+            {/* 최소화 시 세로 텍스트 */}
+            {isWorkspaceMinimized && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span
+                  className="text-gray-500 text-sm cursor-pointer hover:text-gray-300"
+                  style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
+                  onClick={() => setIsWorkspaceMinimized(false)}
+                >
+                  {editorMode === 'block' ? '블록 코딩' : 'Python'}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 3D 뷰 영역 */}
+        <div className={`flex flex-col transition-all duration-300 ${
+          isWorkspaceMinimized ? 'flex-1' : 'w-1/2'
+        }`}>
+          <div className="flex-1 relative">
+            <RobotScene jointAngles={jointAngles} modelType={modelType} position={robotPosition} />
+
+            <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-lg">
+              <p className="text-white text-sm font-medium">3D 시뮬레이션</p>
+              <p className="text-gray-300 text-xs">마우스로 회전/확대</p>
+              <div className="flex gap-1 mt-2">
+                <button
+                  onClick={() => setModelType('gundam')}
+                  className={`px-2 py-1 text-xs rounded ${
+                    modelType === 'gundam'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  Mech
+                </button>
+                <button
+                  onClick={() => setModelType('soldier')}
+                  className={`px-2 py-1 text-xs rounded ${
+                    modelType === 'soldier'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  Soldier
+                </button>
+                <button
+                  onClick={() => setModelType('robot')}
+                  className={`px-2 py-1 text-xs rounded ${
+                    modelType === 'robot'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  Robot
+                </button>
+              </div>
+            </div>
+
+            {isRunning && (
+              <div className="absolute top-4 right-4 bg-green-600/80 backdrop-blur-sm px-4 py-2 rounded-lg z-10">
+                <p className="text-white text-sm font-medium flex items-center gap-2">
+                  <span className="animate-pulse">●</span> 실행 중
+                </p>
+              </div>
+            )}
+
+            <div className="absolute top-4 right-4 w-64" style={{ top: isRunning ? '60px' : '16px' }}>
+              <HumanoidJointControlPanel
+                jointAngles={jointAngles}
+                onJointChange={handleJointChange}
+                onPresetPose={handlePresetPose}
+                position={robotPosition}
+                onPositionChange={setRobotPosition}
+                disabled={isRunning}
+              />
+            </div>
+          </div>
+
+          <div className="h-48 bg-gray-800 border-t border-gray-700 p-4 overflow-auto">
+            <h3 className="text-sm font-semibold text-white mb-2">생성된 코드</h3>
+            <pre className="text-xs text-green-400 font-mono bg-gray-900 p-3 rounded overflow-x-auto">
+              {generatedCode || '// 블록을 추가하면 코드가 여기에 표시됩니다'}
+            </pre>
+          </div>
+        </div>
+      </div>
+
+      <SaveDialog
+        isOpen={showSaveDialog}
+        onClose={() => setShowSaveDialog(false)}
+        onSave={handleSaveProject}
+      />
+
+      <LoadDialog
+        isOpen={showLoadDialog}
+        onClose={() => setShowLoadDialog(false)}
+        projects={savedProjects}
+        onLoad={handleLoadProject}
+        onDelete={handleDeleteProject}
+      />
+
+      <ExamplesDialog
+        isOpen={showExamplesDialog}
+        onClose={() => setShowExamplesDialog(false)}
+        examples={EXAMPLE_PROGRAMS}
+        onLoad={handleLoadExample}
+      />
+    </main>
+  )
+}
