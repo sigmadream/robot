@@ -15,7 +15,8 @@
     "next": "^16.1.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "three": "^0.160.0"
+    "three": "^0.160.0",
+    "three-stdlib": "^2.36.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",

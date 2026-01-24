@@ -29,6 +29,9 @@ importers:
       three:
         specifier: ^0.160.0
         version: 0.160.1
+      three-stdlib:
+        specifier: ^2.36.1
+        version: 2.36.1(three@0.160.1)
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.1.18
