@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, Suspense, useRef, useCallback } from 'react'
+import { useState, Suspense, useRef, useCallback, useEffect } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { toast } from 'sonner'
@@ -16,12 +16,15 @@ export type SkeletonType = 'humanSmall' | 'humanMedium' | 'humanLarge' | 'quadru
 // 탭 타입
 type TabType = 'skin' | 'outfit' | 'accessory' | 'external'
 
-// 외부 모델 타입
+// 외부 모델 타입 (Wasabi에서 가져온 모델)
 interface ExternalModel {
   id: string
   name: string
   url: string
   type: 'outfit' | 'accessory'
+  timestamp?: number
+  size?: number
+  isLocal?: boolean // 로컬 업로드 (아직 저장 안됨)
 }
 
 // 무료 모델 다운로드 소스
@@ -199,10 +202,33 @@ export default function CreatorPage() {
   const [isExporting, setIsExporting] = useState(false)
   const [externalModels, setExternalModels] = useState<ExternalModel[]>([])
   const [selectedExternalModel, setSelectedExternalModel] = useState<ExternalModel | null>(null)
+  const [isLoadingModels, setIsLoadingModels] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // GLB 파일 업로드 핸들러
-  const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+  // Wasabi에서 저장된 모델 목록 불러오기
+  const fetchSavedModels = useCallback(async () => {
+    setIsLoadingModels(true)
+    try {
+      const response = await fetch('/api/creator-models')
+      if (response.ok) {
+        const models = await response.json()
+        setExternalModels(models.map((m: ExternalModel) => ({ ...m, isLocal: false })))
+      }
+    } catch (error) {
+      console.error('모델 목록 불러오기 실패:', error)
+    } finally {
+      setIsLoadingModels(false)
+    }
+  }, [])
+
+  // 컴포넌트 마운트 시 저장된 모델 불러오기
+  useEffect(() => {
+    fetchSavedModels()
+  }, [fetchSavedModels])
+
+  // GLB 파일 업로드 핸들러 (Wasabi에 저장)
+  const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
 
@@ -211,38 +237,91 @@ export default function CreatorPage() {
       return
     }
 
-    const url = URL.createObjectURL(file)
-    const newModel: ExternalModel = {
-      id: `upload-${Date.now()}`,
-      name: file.name.replace('.glb', ''),
-      url,
-      type: 'accessory'
+    // 파일 크기 제한 (50MB)
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error('파일 크기는 50MB를 초과할 수 없습니다')
+      return
     }
 
-    setExternalModels(prev => [...prev, newModel])
-    setSelectedExternalModel(newModel)
-    toast.success(`${file.name} 업로드 완료!`)
+    setIsUploading(true)
+    toast.loading('Wasabi에 업로드 중...')
 
-    // 파일 입력 초기화
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('type', 'accessory')
+
+      const response = await fetch('/api/creator-models', {
+        method: 'POST',
+        body: formData,
+      })
+
+      toast.dismiss()
+
+      if (response.ok) {
+        const data = await response.json()
+        const newModel: ExternalModel = {
+          ...data.model,
+          isLocal: false,
+        }
+        setExternalModels(prev => [newModel, ...prev])
+        setSelectedExternalModel(newModel)
+        toast.success(`${file.name} Wasabi에 저장 완료!`)
+      } else {
+        const error = await response.json()
+        toast.error(error.error || '업로드 실패')
+      }
+    } catch (error) {
+      toast.dismiss()
+      toast.error('업로드 중 오류가 발생했습니다')
+      console.error('업로드 오류:', error)
+    } finally {
+      setIsUploading(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
     }
   }, [])
 
-  // 외부 모델 제거
-  const handleRemoveExternalModel = useCallback((id: string) => {
-    setExternalModels(prev => {
-      const model = prev.find(m => m.id === id)
-      if (model?.url.startsWith('blob:')) {
-        URL.revokeObjectURL(model.url)
+  // 외부 모델 제거 (Wasabi에서도 삭제)
+  const handleRemoveExternalModel = useCallback(async (id: string, type: 'outfit' | 'accessory') => {
+    const model = externalModels.find(m => m.id === id)
+    if (!model) return
+
+    // 로컬 blob URL인 경우 바로 제거
+    if (model.isLocal && model.url.startsWith('blob:')) {
+      URL.revokeObjectURL(model.url)
+      setExternalModels(prev => prev.filter(m => m.id !== id))
+      if (selectedExternalModel?.id === id) {
+        setSelectedExternalModel(null)
       }
-      return prev.filter(m => m.id !== id)
-    })
-    if (selectedExternalModel?.id === id) {
-      setSelectedExternalModel(null)
+      toast.success('모델 제거됨')
+      return
     }
-    toast.success('모델 제거됨')
-  }, [selectedExternalModel])
+
+    // Wasabi에서 삭제
+    toast.loading('삭제 중...')
+    try {
+      const response = await fetch(`/api/creator-models?id=${encodeURIComponent(id)}&type=${type}`, {
+        method: 'DELETE',
+      })
+
+      toast.dismiss()
+
+      if (response.ok) {
+        setExternalModels(prev => prev.filter(m => m.id !== id))
+        if (selectedExternalModel?.id === id) {
+          setSelectedExternalModel(null)
+        }
+        toast.success('Wasabi에서 삭제됨')
+      } else {
+        toast.error('삭제 실패')
+      }
+    } catch (error) {
+      toast.dismiss()
+      toast.error('삭제 중 오류가 발생했습니다')
+    }
+  }, [externalModels, selectedExternalModel])
 
   const handleSkinColorSelect = (index: number) => {
     setCharacterConfig(prev => ({ ...prev, skinColorIndex: index }))
@@ -605,30 +684,62 @@ export default function CreatorPage() {
               <div className="space-y-4">
                 {/* 파일 업로드 */}
                 <div>
-                  <p className="text-gray-400 text-xs mb-3">GLB 파일을 업로드하여 외부 모델을 추가하세요</p>
+                  <p className="text-gray-400 text-xs mb-3">GLB 파일을 Wasabi 클라우드에 저장합니다</p>
                   <input
                     ref={fileInputRef}
                     type="file"
                     accept=".glb"
                     onChange={handleFileUpload}
                     className="hidden"
+                    disabled={isUploading}
                   />
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-full p-4 border-2 border-dashed border-gray-600 rounded-lg hover:border-green-500 hover:bg-gray-700/50 transition-all text-gray-400 hover:text-green-400"
+                    disabled={isUploading}
+                    className="w-full p-4 border-2 border-dashed border-gray-600 rounded-lg hover:border-green-500 hover:bg-gray-700/50 transition-all text-gray-400 hover:text-green-400 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                    </svg>
-                    <span className="text-sm">GLB 파일 업로드</span>
+                    {isUploading ? (
+                      <>
+                        <svg className="w-8 h-8 mx-auto mb-2 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span className="text-sm">업로드 중...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        <span className="text-sm">GLB 파일 업로드 (Wasabi 저장)</span>
+                      </>
+                    )}
                   </button>
                 </div>
 
-                {/* 업로드된 모델 목록 */}
-                {externalModels.length > 0 && (
-                  <div>
-                    <h4 className="text-white text-sm font-medium mb-2">업로드된 모델</h4>
-                    <div className="space-y-2">
+                {/* Wasabi에 저장된 모델 목록 */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-white text-sm font-medium">저장된 모델 (Wasabi)</h4>
+                    <button
+                      onClick={fetchSavedModels}
+                      disabled={isLoadingModels}
+                      className="text-xs text-gray-400 hover:text-white"
+                    >
+                      {isLoadingModels ? '로딩...' : '새로고침'}
+                    </button>
+                  </div>
+
+                  {isLoadingModels ? (
+                    <div className="text-center py-4 text-gray-500">
+                      <svg className="w-6 h-6 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <p className="mt-2 text-xs">로딩 중...</p>
+                    </div>
+                  ) : externalModels.length > 0 ? (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
                       {externalModels.map((model) => (
                         <div
                           key={model.id}
@@ -642,28 +753,39 @@ export default function CreatorPage() {
                             onClick={() => setSelectedExternalModel(
                               selectedExternalModel?.id === model.id ? null : model
                             )}
-                            className="flex-1 text-left text-sm truncate"
+                            className="flex-1 text-left truncate"
                           >
-                            {model.name}
+                            <span className="text-sm font-medium">{model.name}</span>
+                            {model.size && (
+                              <span className="text-xs opacity-75 ml-2">
+                                ({(model.size / 1024 / 1024).toFixed(1)}MB)
+                              </span>
+                            )}
                           </button>
                           <button
-                            onClick={() => handleRemoveExternalModel(model.id)}
+                            onClick={() => handleRemoveExternalModel(model.id, model.type)}
                             className="p-1 hover:bg-red-500 rounded transition-colors ml-2"
+                            title="삭제"
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
                           </button>
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="text-center py-4 text-gray-500">
+                      <p className="text-xs">저장된 모델이 없습니다</p>
+                      <p className="text-xs mt-1">GLB 파일을 업로드하세요</p>
+                    </div>
+                  )}
+                </div>
 
                 {/* 무료 모델 다운로드 소스 */}
                 <div className="border-t border-gray-700 pt-4">
                   <h4 className="text-white text-sm font-medium mb-2">무료 모델 다운로드</h4>
-                  <p className="text-gray-500 text-xs mb-3">아래 사이트에서 CC0 라이센스 GLB 모델을 다운로드하세요</p>
+                  <p className="text-gray-500 text-xs mb-3">아래 사이트에서 CC0 라이센스 GLB 모델을 다운로드 후 업로드하세요</p>
                   <div className="space-y-2">
                     {MODEL_SOURCES.map((source, i) => (
                       <a

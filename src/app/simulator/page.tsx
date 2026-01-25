@@ -780,7 +780,12 @@ export default function Home() {
   // 전체 자동 매핑
   const handleAutoMapAll = () => {
     if (currentBoneMappings.length === 0) {
-      toast.error('매핑할 본이 없습니다')
+      if (availableBones.length === 0) {
+        toast.error('모델에서 본을 찾을 수 없습니다')
+      } else {
+        toast.error(`자동 매핑할 수 없습니다. 사용 가능한 본 ${availableBones.length}개가 있으니 수동으로 매핑하세요.`)
+        setShowBoneMappingPanel(true)
+      }
       return
     }
 
@@ -1083,7 +1088,17 @@ export default function Home() {
 
                 <div className="text-xs text-gray-400 mb-3">
                   모델: {externalModelName || '알 수 없음'}<br />
-                  발견된 본: {availableBones.length}개 | 매핑됨: {currentBoneMappings.length}개
+                  발견된 본: {availableBones.length}개 | 자동 매핑: {currentBoneMappings.length}개
+                  {availableBones.length > 0 && currentBoneMappings.length === 0 && (
+                    <div className="text-yellow-400 mt-1">
+                      자동 매핑되지 않았습니다. 수동으로 본을 선택하세요.
+                    </div>
+                  )}
+                  {availableBones.length === 0 && (
+                    <div className="text-red-400 mt-1">
+                      모델에서 본/노드를 찾을 수 없습니다.
+                    </div>
+                  )}
                 </div>
 
                 {mappingTestResult && (

@@ -158,10 +158,13 @@ export default function ExternalModel({
     const bones: string[] = []
     const boneSet = new Set<string>()
 
+    // 제외할 일반적인 루트/씬 이름
+    const excludeNames = ['Scene', 'AuxScene', 'Root', 'Armature', 'RootNode', 'Sketchfab_model', 'root']
+
     model.traverse((child) => {
       // THREE.Bone 직접 탐색
       if (child instanceof THREE.Bone) {
-        if (!boneSet.has(child.name)) {
+        if (!boneSet.has(child.name) && child.name && !excludeNames.includes(child.name)) {
           boneSet.add(child.name)
           bones.push(child.name)
         }
@@ -170,7 +173,7 @@ export default function ExternalModel({
       // SkinnedMesh에서 skeleton의 bones 탐색
       if (child instanceof THREE.SkinnedMesh && child.skeleton) {
         for (const bone of child.skeleton.bones) {
-          if (!boneSet.has(bone.name)) {
+          if (!boneSet.has(bone.name) && bone.name && !excludeNames.includes(bone.name)) {
             boneSet.add(bone.name)
             bones.push(bone.name)
           }
@@ -182,10 +185,33 @@ export default function ExternalModel({
     if (bones.length === 0) {
       console.log('[ExternalModel] 본이 없음, Object3D 구조 탐색 중...')
       model.traverse((child) => {
-        if (child.name && child.children.length > 0) {
-          bones.push(child.name)
+        // 이름이 있고, Mesh가 아닌 Object3D (조작 가능한 노드)
+        if (child.name &&
+            !excludeNames.includes(child.name) &&
+            !boneSet.has(child.name)) {
+          // Mesh 자체는 제외하고 그룹/노드만 포함
+          if (!(child instanceof THREE.Mesh)) {
+            boneSet.add(child.name)
+            bones.push(child.name)
+          }
         }
       })
+
+      // 그래도 없으면 모든 이름있는 객체 수집
+      if (bones.length === 0) {
+        console.log('[ExternalModel] Object3D도 없음, 모든 이름있는 객체 수집...')
+        model.traverse((child) => {
+          if (child.name && !boneSet.has(child.name)) {
+            boneSet.add(child.name)
+            bones.push(child.name)
+          }
+        })
+      }
+    }
+
+    console.log('[ExternalModel] 수집된 본/객체 수:', bones.length)
+    if (bones.length > 0 && bones.length <= 30) {
+      console.log('[ExternalModel] 이름 목록:', bones.join(', '))
     }
 
     return bones
