@@ -17,6 +17,15 @@ export interface SavedBoneMapping {
 const STORAGE_KEY = 'robot-blockly-projects';
 const CURRENT_PROJECT_KEY = 'robot-blockly-current';
 const BONE_MAPPING_KEY = 'robot-bone-mappings';
+const EXTERNAL_MODEL_KEY = 'robot-external-model';
+
+export interface SavedExternalModel {
+  name: string;
+  url: string;
+  timestamp: number;
+  scale?: number;
+  source: 'file' | 'url';
+}
 
 // 프로젝트 저장
 export const saveProject = (name: string, workspaceXml: string, jointAngles?: JointAngles): void => {
@@ -199,5 +208,112 @@ export const deleteBoneMappingFromServer = async (modelName: string): Promise<bo
     // 서버 실패 시 로컬에서만 삭제
     deleteBoneMapping(modelName);
     return false;
+  }
+};
+
+// ============================================
+// 외부 모델 저장 함수들
+// ============================================
+
+// 외부 모델 목록 저장
+export const saveExternalModel = (
+  name: string,
+  url: string,
+  source: 'file' | 'url',
+  scale?: number
+): void => {
+  const models = getAllExternalModels();
+  const model: SavedExternalModel = {
+    name,
+    url,
+    timestamp: Date.now(),
+    scale,
+    source,
+  };
+
+  const existingIndex = models.findIndex(m => m.name === name);
+  if (existingIndex >= 0) {
+    models[existingIndex] = model;
+  } else {
+    models.push(model);
+  }
+
+  localStorage.setItem(EXTERNAL_MODEL_KEY, JSON.stringify(models));
+};
+
+// 모든 외부 모델 불러오기
+export const getAllExternalModels = (): SavedExternalModel[] => {
+  const data = localStorage.getItem(EXTERNAL_MODEL_KEY);
+  return data ? JSON.parse(data) : [];
+};
+
+// 특정 외부 모델 불러오기
+export const loadExternalModel = (name: string): SavedExternalModel | null => {
+  const models = getAllExternalModels();
+  return models.find(m => m.name === name) || null;
+};
+
+// 외부 모델 삭제
+export const deleteExternalModel = (name: string): void => {
+  const models = getAllExternalModels().filter(m => m.name !== name);
+  localStorage.setItem(EXTERNAL_MODEL_KEY, JSON.stringify(models));
+};
+
+// 현재 선택된 외부 모델 URL 저장
+export const saveCurrentExternalModel = (url: string, name?: string): void => {
+  localStorage.setItem(EXTERNAL_MODEL_KEY + '-current', JSON.stringify({ url, name, timestamp: Date.now() }));
+};
+
+// 현재 선택된 외부 모델 URL 불러오기
+export const loadCurrentExternalModel = (): { url: string; name?: string } | null => {
+  const data = localStorage.getItem(EXTERNAL_MODEL_KEY + '-current');
+  return data ? JSON.parse(data) : null;
+};
+
+// 외부 모델 동기화 테스트
+export const testExternalModelSync = async (): Promise<{
+  success: boolean;
+  localCount: number;
+  message: string;
+}> => {
+  try {
+    const localModels = getAllExternalModels();
+
+    // 로컬 스토리지 테스트
+    const testModel: SavedExternalModel = {
+      name: '__sync_test__',
+      url: 'https://test.example.com/test.glb',
+      timestamp: Date.now(),
+      source: 'url',
+    };
+
+    // 저장 테스트
+    saveExternalModel(testModel.name, testModel.url, testModel.source);
+
+    // 불러오기 테스트
+    const loaded = loadExternalModel(testModel.name);
+
+    // 삭제 테스트
+    deleteExternalModel(testModel.name);
+
+    if (loaded && loaded.url === testModel.url) {
+      return {
+        success: true,
+        localCount: localModels.length,
+        message: `동기화 테스트 성공! 저장된 모델: ${localModels.length}개`,
+      };
+    } else {
+      return {
+        success: false,
+        localCount: localModels.length,
+        message: '동기화 테스트 실패: 데이터 불일치',
+      };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      localCount: 0,
+      message: `동기화 테스트 오류: ${error}`,
+    };
   }
 };

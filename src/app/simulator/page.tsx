@@ -10,7 +10,7 @@ import type { ModelType } from '@/components/Scene/RobotScene'
 import { AnimationController } from '@/lib/animationController'
 import { generateCode } from '@/lib/blockly/codeGenerator'
 import { generatePythonCode } from '@/lib/blockly/pythonGenerator'
-import { saveProject, loadProject, getAllProjects, deleteProject, saveCurrentWorkspace, loadCurrentWorkspace, SavedProject } from '@/lib/storage'
+import { saveProject, loadProject, getAllProjects, deleteProject, saveCurrentWorkspace, loadCurrentWorkspace, SavedProject, saveExternalModel, getAllExternalModels, deleteExternalModel, loadCurrentExternalModel, saveCurrentExternalModel, testExternalModelSync, SavedExternalModel } from '@/lib/storage'
 import { EXAMPLE_PROGRAMS } from '@/lib/examples'
 import ControlPanel from '@/components/Controls/ControlPanel'
 import HumanoidJointControlPanel from '@/components/Controls/HumanoidJointControlPanel'
@@ -55,7 +55,10 @@ export default function Home() {
   const [editorMode, setEditorMode] = useState<EditorMode>('block')
   const [pythonCode, setPythonCode] = useState('')
   const [externalModelUrl, setExternalModelUrl] = useState<string>('')
+  const [externalModelName, setExternalModelName] = useState<string>('')
   const [showExternalModelDialog, setShowExternalModelDialog] = useState(false)
+  const [savedExternalModels, setSavedExternalModels] = useState<SavedExternalModel[]>([])
+  const [syncTestResult, setSyncTestResult] = useState<string>('')
 
   const animationController = useRef(new AnimationController())
   const executionSpeedRef = useRef(executionSpeed)
@@ -89,6 +92,16 @@ export default function Home() {
     const saved = loadCurrentWorkspace()
     if (saved) {
       setWorkspaceXml(saved)
+    }
+
+    // 저장된 외부 모델 목록 불러오기
+    setSavedExternalModels(getAllExternalModels())
+
+    // 마지막으로 사용한 외부 모델 불러오기
+    const currentExternal = loadCurrentExternalModel()
+    if (currentExternal) {
+      setExternalModelUrl(currentExternal.url)
+      setExternalModelName(currentExternal.name || '')
     }
   }, [])
 
@@ -660,20 +673,59 @@ export default function Home() {
     const file = e.target.files?.[0]
     if (file) {
       const url = URL.createObjectURL(file)
+      const name = file.name.replace(/\.(glb|gltf)$/i, '')
       setExternalModelUrl(url)
+      setExternalModelName(name)
       setModelType('external')
+      saveCurrentExternalModel(url, name)
+      saveExternalModel(name, url, 'file')
+      setSavedExternalModels(getAllExternalModels())
       setShowExternalModelDialog(false)
       toast.success(`"${file.name}" 모델을 불러왔습니다!`)
     }
   }
 
   // URL로 외부 모델 로드
-  const handleExternalModelUrlLoad = (url: string) => {
+  const handleExternalModelUrlLoad = (url: string, name?: string) => {
     if (url) {
+      const modelName = name || url.split('/').pop()?.replace(/\.(glb|gltf)$/i, '') || 'external-model'
       setExternalModelUrl(url)
+      setExternalModelName(modelName)
       setModelType('external')
+      saveCurrentExternalModel(url, modelName)
+      saveExternalModel(modelName, url, 'url')
+      setSavedExternalModels(getAllExternalModels())
       setShowExternalModelDialog(false)
       toast.success('외부 모델을 불러왔습니다!')
+    }
+  }
+
+  // 저장된 외부 모델 불러오기
+  const handleLoadSavedExternalModel = (model: SavedExternalModel) => {
+    setExternalModelUrl(model.url)
+    setExternalModelName(model.name)
+    setModelType('external')
+    saveCurrentExternalModel(model.url, model.name)
+    setShowExternalModelDialog(false)
+    toast.success(`"${model.name}" 모델을 불러왔습니다!`)
+  }
+
+  // 저장된 외부 모델 삭제
+  const handleDeleteSavedExternalModel = (name: string) => {
+    deleteExternalModel(name)
+    setSavedExternalModels(getAllExternalModels())
+    toast.success('모델이 삭제되었습니다')
+  }
+
+  // 동기화 테스트
+  const handleSyncTest = async () => {
+    setSyncTestResult('테스트 중...')
+    const result = await testExternalModelSync()
+    setSyncTestResult(result.message)
+    if (result.success) {
+      toast.success(result.message)
+    } else {
+      toast.error(result.message)
     }
   }
 
@@ -920,10 +972,52 @@ export default function Home() {
       {/* 외부 모델 불러오기 다이얼로그 */}
       {showExternalModelDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-xl p-6 w-96 border border-gray-700">
+          <div className="bg-gray-800 rounded-xl p-6 w-[500px] max-h-[80vh] overflow-y-auto border border-gray-700">
             <h2 className="text-xl font-bold text-white mb-4">외부 모델 불러오기</h2>
 
             <div className="space-y-4">
+              {/* 저장된 모델 목록 */}
+              {savedExternalModels.length > 0 && (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">저장된 모델 ({savedExternalModels.length}개)</label>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {savedExternalModels.map((model) => (
+                      <div
+                        key={model.name}
+                        className="flex items-center justify-between bg-gray-700 rounded-lg px-3 py-2"
+                      >
+                        <div className="flex-1">
+                          <div className="text-white text-sm font-medium">{model.name}</div>
+                          <div className="text-gray-400 text-xs">
+                            {model.source === 'file' ? '파일' : 'URL'} • {new Date(model.timestamp).toLocaleDateString()}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleLoadSavedExternalModel(model)}
+                            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+                          >
+                            불러오기
+                          </button>
+                          <button
+                            onClick={() => handleDeleteSavedExternalModel(model.name)}
+                            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-gray-600" />
+                <span className="text-gray-500 text-sm">새 모델 추가</span>
+                <div className="flex-1 h-px bg-gray-600" />
+              </div>
+
               {/* 파일 업로드 */}
               <div>
                 <label className="block text-sm text-gray-400 mb-2">GLB 파일 선택</label>
@@ -969,9 +1063,27 @@ export default function Home() {
 
               {externalModelUrl && (
                 <div className="text-sm text-green-400">
-                  현재 로드된 모델이 있습니다
+                  현재 로드된 모델: {externalModelName || '알 수 없음'}
                 </div>
               )}
+
+              {/* 동기화 테스트 */}
+              <div className="border-t border-gray-600 pt-4 mt-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-400">저장소 동기화 테스트</span>
+                  <button
+                    onClick={handleSyncTest}
+                    className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg"
+                  >
+                    테스트 실행
+                  </button>
+                </div>
+                {syncTestResult && (
+                  <div className={`mt-2 text-sm ${syncTestResult.includes('성공') ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {syncTestResult}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 mt-6">
