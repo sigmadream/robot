@@ -6,17 +6,23 @@ import { OrbitControls, Grid, PerspectiveCamera } from '@react-three/drei'
 import HumanoidRobot from '../HumanoidRobot/HumanoidRobot'
 import SoldierModel from '../HumanoidRobot/SoldierModel'
 import RobotExpressiveModel from '../HumanoidRobot/RobotExpressiveModel'
-import { HumanoidJointAngles, Position3D } from '@/lib/types/robot'
+import ExternalModel, { BoneMapping } from '../ExternalModel/ExternalModel'
+import { HumanoidJointAngles, HumanoidJointKey, Position3D } from '@/lib/types/robot'
 
-export type ModelType = 'gundam' | 'soldier' | 'robot'
+export type ModelType = 'gundam' | 'soldier' | 'robot' | 'external'
 
 interface RobotSceneProps {
   jointAngles: HumanoidJointAngles;
   modelType?: ModelType;
   position?: Position3D;
+  brightness?: number; // 0.0 ~ 2.0, 기본값 1.0
+  externalModelUrl?: string;
+  externalModelScale?: number;
+  onBonesFound?: (bones: string[], mappings: BoneMapping[]) => void;
+  customBoneMapping?: Record<HumanoidJointKey, string>;
 }
 
-function Scene({ jointAngles, modelType = 'gundam', position = { x: 0, y: 0, z: 0 } }: RobotSceneProps) {
+function Scene({ jointAngles, modelType = 'gundam', position = { x: 0, y: 0, z: 0 }, brightness = 1.0, externalModelUrl, externalModelScale = 1, onBonesFound, customBoneMapping }: RobotSceneProps) {
   return (
     <>
       {/* 카메라 설정 */}
@@ -31,26 +37,36 @@ function Scene({ jointAngles, modelType = 'gundam', position = { x: 0, y: 0, z: 
         target={[position.x, 1.5 + position.y, position.z]}
       />
 
-      {/* 조명 */}
-      <ambientLight intensity={0.5} />
+      {/* 조명 - brightness로 강도 조절 */}
+      <ambientLight intensity={0.5 * brightness} />
       <directionalLight
         position={[10, 15, 5]}
-        intensity={1.2}
+        intensity={1.2 * brightness}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
       />
       <directionalLight
         position={[-5, 10, -5]}
-        intensity={0.4}
+        intensity={0.4 * brightness}
         color="#b3d9ff"
       />
-      <pointLight position={[0, 8, 5]} intensity={0.3} />
+      <pointLight position={[0, 8, 5]} intensity={0.3 * brightness} />
 
       {/* 모델 선택 */}
       {modelType === 'gundam' && <HumanoidRobot jointAngles={jointAngles} position={position} />}
       {modelType === 'soldier' && <SoldierModel jointAngles={jointAngles} position={position} />}
       {modelType === 'robot' && <RobotExpressiveModel jointAngles={jointAngles} position={position} />}
+      {modelType === 'external' && externalModelUrl && (
+        <ExternalModel
+          url={externalModelUrl}
+          scale={externalModelScale}
+          position={position}
+          jointAngles={jointAngles}
+          onBonesFound={onBonesFound}
+          customBoneMapping={customBoneMapping}
+        />
+      )}
 
       {/* 그리드 */}
       <Grid
@@ -73,12 +89,21 @@ function Scene({ jointAngles, modelType = 'gundam', position = { x: 0, y: 0, z: 
   )
 }
 
-export default function RobotScene({ jointAngles, modelType = 'gundam', position = { x: 0, y: 0, z: 0 } }: RobotSceneProps) {
+export default function RobotScene({ jointAngles, modelType = 'gundam', position = { x: 0, y: 0, z: 0 }, brightness = 1.0, externalModelUrl, externalModelScale = 1, onBonesFound, customBoneMapping }: RobotSceneProps) {
   return (
     <div className="w-full h-full">
       <Canvas shadows>
         <Suspense fallback={null}>
-          <Scene jointAngles={jointAngles} modelType={modelType} position={position} />
+          <Scene
+            jointAngles={jointAngles}
+            modelType={modelType}
+            position={position}
+            brightness={brightness}
+            externalModelUrl={externalModelUrl}
+            externalModelScale={externalModelScale}
+            onBonesFound={onBonesFound}
+            customBoneMapping={customBoneMapping}
+          />
         </Suspense>
       </Canvas>
     </div>
