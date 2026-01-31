@@ -938,17 +938,44 @@ export default function Home() {
     }
   }
 
-  // 배경 GLB 파일 로드
+  // 배경 GLB 파일 로드 (Wasabi에 업로드)
   const handleBackgroundModelLoad = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      const name = file.name.replace(/\.(glb|gltf)$/i, '')
+
       // 이전 Blob URL 정리
       if (backgroundModelUrl.startsWith('blob:')) {
         URL.revokeObjectURL(backgroundModelUrl)
       }
+
+      // 즉시 Blob URL로 미리보기
       const blobUrl = URL.createObjectURL(file)
       setBackgroundModelUrl(blobUrl)
-      toast.success(`배경 모델 "${file.name}" 을 불러왔습니다`)
+
+      // 백그라운드에서 Wasabi에 업로드
+      toast.promise(
+        uploadModelToWasabi(file, {}),
+        {
+          loading: `배경 "${file.name}" Wasabi 업로드 중...`,
+          success: (result) => {
+            if (result.success && result.url && result.id) {
+              setBackgroundModelUrl(result.url)
+              saveExternalModel(name, result.url, 'url')
+              setSavedExternalModels(getAllExternalModels())
+              URL.revokeObjectURL(blobUrl)
+              localStorage.setItem(`wasabi-model-id-${name}`, result.id)
+              return `배경 "${file.name}" 업로드 완료!`
+            }
+            return '업로드 완료'
+          },
+          error: () => {
+            saveExternalModel(name, blobUrl, 'file')
+            setSavedExternalModels(getAllExternalModels())
+            return '업로드 실패. 현재 세션에서만 사용 가능합니다.'
+          }
+        }
+      )
     }
   }
 
