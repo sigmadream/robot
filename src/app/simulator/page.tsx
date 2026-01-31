@@ -69,7 +69,7 @@ export default function Home() {
   const [showPythonHelp, setShowPythonHelp] = useState(false)
   const [backgroundModelUrl, setBackgroundModelUrl] = useState<string>('')
   const [backgroundModelScale, setBackgroundModelScale] = useState<number>(1)
-  const [showBackgroundModelList, setShowBackgroundModelList] = useState(false)
+  const [showBackgroundDialog, setShowBackgroundDialog] = useState(false)
 
   const animationController = useRef(new AnimationController())
   const executionSpeedRef = useRef(executionSpeed)
@@ -967,7 +967,7 @@ export default function Home() {
       URL.revokeObjectURL(backgroundModelUrl)
     }
     setBackgroundModelUrl(model.url)
-    setShowBackgroundModelList(false)
+    setShowBackgroundDialog(false)
     toast.success(`배경: "${model.name}"`)
   }
 
@@ -1442,63 +1442,41 @@ export default function Home() {
                 </button>
               </div>
               {/* 배경 모델 컨트롤 */}
-              <div className="relative">
-                <div className="flex flex-wrap items-center gap-1 mt-2">
-                  <label className="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600 cursor-pointer">
-                    배경 파일
-                    <input
-                      type="file"
-                      accept=".glb,.gltf"
-                      onChange={handleBackgroundModelLoad}
-                      className="hidden"
-                    />
-                  </label>
-                  {savedExternalModels.length > 0 && (
-                    <button
-                      onClick={() => setShowBackgroundModelList(!showBackgroundModelList)}
-                      className="px-2 py-1 text-xs rounded bg-teal-600 hover:bg-teal-700 text-white"
-                    >
-                      배경 목록
-                    </button>
-                  )}
-                  {backgroundModelUrl && (
-                    <button
-                      onClick={handleRemoveBackground}
-                      className="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-700 text-white"
-                    >
-                      제거
-                    </button>
-                  )}
-                </div>
+              <div className="flex flex-wrap items-center gap-1 mt-2">
+                <button
+                  onClick={() => setShowBackgroundDialog(true)}
+                  className={`px-2 py-1 text-xs rounded ${
+                    backgroundModelUrl
+                      ? 'bg-teal-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  배경
+                </button>
                 {backgroundModelUrl && (
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-gray-400 w-14">스케일</span>
-                    <input
-                      type="range"
-                      min="0.01"
-                      max="10"
-                      step="0.01"
-                      value={backgroundModelScale}
-                      onChange={(e) => setBackgroundModelScale(parseFloat(e.target.value))}
-                      className="flex-1 h-1 accent-teal-500"
-                    />
-                    <span className="text-xs text-gray-300 w-10 text-right">{backgroundModelScale.toFixed(2)}</span>
-                  </div>
-                )}
-                {showBackgroundModelList && (
-                  <div className="absolute top-full left-0 mt-1 w-56 bg-gray-800/95 backdrop-blur-sm border border-gray-600 rounded-lg shadow-lg z-20 max-h-48 overflow-y-auto">
-                    {savedExternalModels.map((model) => (
-                      <button
-                        key={model.name}
-                        onClick={() => handleLoadBackgroundFromSaved(model)}
-                        className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-gray-700 first:rounded-t-lg last:rounded-b-lg"
-                      >
-                        {model.name}
-                      </button>
-                    ))}
-                  </div>
+                  <button
+                    onClick={handleRemoveBackground}
+                    className="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    제거
+                  </button>
                 )}
               </div>
+              {backgroundModelUrl && (
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-xs text-gray-400 w-14">스케일</span>
+                  <input
+                    type="range"
+                    min="0.01"
+                    max="10"
+                    step="0.01"
+                    value={backgroundModelScale}
+                    onChange={(e) => setBackgroundModelScale(parseFloat(e.target.value))}
+                    className="flex-1 h-1 accent-teal-500"
+                  />
+                  <span className="text-xs text-gray-300 w-10 text-right">{backgroundModelScale.toFixed(2)}</span>
+                </div>
+              )}
               {/* 외부 모델일 때 본 매핑 버튼들 */}
               {modelType === 'external' && externalModelUrl && (
                 <div className="flex flex-wrap gap-1 mt-2">
@@ -1799,6 +1777,91 @@ export default function Home() {
             <div className="flex justify-end gap-2 mt-6">
               <button
                 onClick={() => setShowExternalModelDialog(false)}
+                className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 배경 모델 불러오기 다이얼로그 */}
+      {showBackgroundDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-xl p-6 w-[500px] max-h-[80vh] overflow-y-auto border border-gray-700">
+            <h2 className="text-xl font-bold text-white mb-4">배경 모델 불러오기</h2>
+
+            <div className="space-y-4">
+              {/* 저장된 모델 목록 */}
+              {savedExternalModels.length > 0 && (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">저장된 모델 ({savedExternalModels.length}개)</label>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {savedExternalModels.map((model) => (
+                      <div
+                        key={model.name}
+                        className="flex items-center justify-between bg-gray-700 rounded-lg px-3 py-2"
+                      >
+                        <div className="flex-1">
+                          <div className="text-white text-sm font-medium">{model.name}</div>
+                          <div className="text-gray-400 text-xs">
+                            {model.source === 'file' ? '파일' : 'URL'} • {new Date(model.timestamp).toLocaleDateString()}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleLoadBackgroundFromSaved(model)}
+                          className="px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white text-xs rounded"
+                        >
+                          배경으로 사용
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-gray-600" />
+                <span className="text-gray-500 text-sm">로컬 파일</span>
+                <div className="flex-1 h-px bg-gray-600" />
+              </div>
+
+              {/* 파일 업로드 */}
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">GLB 파일 선택</label>
+                <input
+                  type="file"
+                  accept=".glb,.gltf"
+                  onChange={(e) => {
+                    handleBackgroundModelLoad(e)
+                    setShowBackgroundDialog(false)
+                  }}
+                  className="w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-teal-600 file:text-white hover:file:bg-teal-700 file:cursor-pointer"
+                />
+              </div>
+
+              {backgroundModelUrl && (
+                <div className="text-sm text-green-400">
+                  현재 배경 모델 로드됨
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              {backgroundModelUrl && (
+                <button
+                  onClick={() => {
+                    handleRemoveBackground()
+                    setShowBackgroundDialog(false)
+                  }}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm"
+                >
+                  배경 제거
+                </button>
+              )}
+              <button
+                onClick={() => setShowBackgroundDialog(false)}
                 className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
               >
                 닫기
