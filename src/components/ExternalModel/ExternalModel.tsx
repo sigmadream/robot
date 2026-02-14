@@ -7,32 +7,33 @@ import { GLTFLoader } from 'three-stdlib'
 import { HumanoidJointAngles, HumanoidJointKey } from '@/lib/types/robot'
 
 // 본 이름 매핑 - 다양한 명명 규칙 지원
+// 각 관절의 첫 번째 항목은 정확히 일치하는 이름 (exact match 우선)
 const BONE_NAME_PATTERNS: Record<HumanoidJointKey, string[]> = {
-  torso: ['Spine', 'spine', 'Spine1', 'spine1', 'mixamorigSpine', 'Torso', 'torso', 'Chest', 'chest'],
-  neckYaw: ['Neck', 'neck', 'mixamorigNeck', 'Head', 'head'],
-  neckPitch: ['Head', 'head', 'mixamorigHead'],
+  torso: ['torso', 'Spine', 'spine', 'Spine1', 'spine1', 'mixamorigSpine', 'Torso', 'Chest', 'chest'],
+  neckYaw: ['neckYaw', 'Neck', 'neck', 'mixamorigNeck'],
+  neckPitch: ['neckPitch', 'Head', 'head', 'mixamorigHead'],
 
-  leftShoulderPitch: ['LeftArm', 'LeftShoulder', 'mixamorigLeftArm', 'Left_Arm', 'L_Arm', 'Arm.L', 'shoulder.L', 'LeftUpperArm'],
-  leftShoulderYaw: ['LeftArm', 'LeftShoulder', 'mixamorigLeftShoulder', 'Left_Shoulder', 'L_Shoulder'],
-  leftElbow: ['LeftForeArm', 'LeftElbow', 'mixamorigLeftForeArm', 'Left_ForeArm', 'L_ForeArm', 'forearm.L', 'LeftLowerArm'],
-  leftWrist: ['LeftHand', 'LeftWrist', 'mixamorigLeftHand', 'Left_Hand', 'L_Hand', 'hand.L'],
-  leftGrip: ['LeftHandIndex1', 'LeftHandThumb1', 'mixamorigLeftHandIndex1', 'Left_Finger', 'L_Finger'],
+  leftShoulderPitch: ['leftShoulderPitch', 'LeftArm', 'mixamorigLeftArm', 'Left_Arm', 'L_Arm', 'Arm.L', 'shoulder.L', 'LeftUpperArm'],
+  leftShoulderYaw: ['leftShoulderYaw', 'LeftShoulder', 'mixamorigLeftShoulder', 'Left_Shoulder', 'L_Shoulder'],
+  leftElbow: ['leftElbow', 'LeftForeArm', 'LeftElbow', 'mixamorigLeftForeArm', 'Left_ForeArm', 'L_ForeArm', 'forearm.L', 'LeftLowerArm'],
+  leftWrist: ['leftWrist', 'LeftHand', 'LeftWrist', 'mixamorigLeftHand', 'Left_Hand', 'L_Hand', 'hand.L'],
+  leftGrip: ['leftGrip', 'LeftHandIndex1', 'LeftHandThumb1', 'mixamorigLeftHandIndex1', 'Left_Finger', 'L_Finger', 'LeftGrip'],
 
-  rightShoulderPitch: ['RightArm', 'RightShoulder', 'mixamorigRightArm', 'Right_Arm', 'R_Arm', 'Arm.R', 'shoulder.R', 'RightUpperArm'],
-  rightShoulderYaw: ['RightArm', 'RightShoulder', 'mixamorigRightShoulder', 'Right_Shoulder', 'R_Shoulder'],
-  rightElbow: ['RightForeArm', 'RightElbow', 'mixamorigRightForeArm', 'Right_ForeArm', 'R_ForeArm', 'forearm.R', 'RightLowerArm'],
-  rightWrist: ['RightHand', 'RightWrist', 'mixamorigRightHand', 'Right_Hand', 'R_Hand', 'hand.R'],
-  rightGrip: ['RightHandIndex1', 'RightHandThumb1', 'mixamorigRightHandIndex1', 'Right_Finger', 'R_Finger'],
+  rightShoulderPitch: ['rightShoulderPitch', 'RightArm', 'mixamorigRightArm', 'Right_Arm', 'R_Arm', 'Arm.R', 'shoulder.R', 'RightUpperArm'],
+  rightShoulderYaw: ['rightShoulderYaw', 'RightShoulder', 'mixamorigRightShoulder', 'Right_Shoulder', 'R_Shoulder'],
+  rightElbow: ['rightElbow', 'RightForeArm', 'RightElbow', 'mixamorigRightForeArm', 'Right_ForeArm', 'R_ForeArm', 'forearm.R', 'RightLowerArm'],
+  rightWrist: ['rightWrist', 'RightHand', 'RightWrist', 'mixamorigRightHand', 'Right_Hand', 'R_Hand', 'hand.R'],
+  rightGrip: ['rightGrip', 'RightHandIndex1', 'RightHandThumb1', 'mixamorigRightHandIndex1', 'Right_Finger', 'R_Finger', 'RightGrip'],
 
-  leftHipPitch: ['LeftUpLeg', 'LeftHip', 'mixamorigLeftUpLeg', 'Left_UpLeg', 'L_UpLeg', 'thigh.L', 'LeftUpperLeg'],
-  leftHipYaw: ['LeftUpLeg', 'LeftHip', 'mixamorigLeftUpLeg', 'Left_Hip', 'L_Hip'],
-  leftKnee: ['LeftLeg', 'LeftKnee', 'mixamorigLeftLeg', 'Left_Leg', 'L_Leg', 'shin.L', 'LeftLowerLeg'],
-  leftAnkle: ['LeftFoot', 'LeftAnkle', 'mixamorigLeftFoot', 'Left_Foot', 'L_Foot', 'foot.L'],
+  leftHipPitch: ['leftHipPitch', 'LeftUpLeg', 'mixamorigLeftUpLeg', 'Left_UpLeg', 'L_UpLeg', 'thigh.L', 'LeftUpperLeg'],
+  leftHipYaw: ['leftHipYaw', 'LeftHip', 'mixamorigLeftUpLeg', 'Left_Hip', 'L_Hip'],
+  leftKnee: ['leftKnee', 'LeftLeg', 'LeftKnee', 'mixamorigLeftLeg', 'Left_Leg', 'L_Leg', 'shin.L', 'LeftLowerLeg'],
+  leftAnkle: ['leftAnkle', 'LeftFoot', 'LeftAnkle', 'mixamorigLeftFoot', 'Left_Foot', 'L_Foot', 'foot.L'],
 
-  rightHipPitch: ['RightUpLeg', 'RightHip', 'mixamorigRightUpLeg', 'Right_UpLeg', 'R_UpLeg', 'thigh.R', 'RightUpperLeg'],
-  rightHipYaw: ['RightUpLeg', 'RightHip', 'mixamorigRightUpLeg', 'Right_Hip', 'R_Hip'],
-  rightKnee: ['RightLeg', 'RightKnee', 'mixamorigRightLeg', 'Right_Leg', 'R_Leg', 'shin.R', 'RightLowerLeg'],
-  rightAnkle: ['RightFoot', 'RightAnkle', 'mixamorigRightFoot', 'Right_Foot', 'R_Foot', 'foot.R'],
+  rightHipPitch: ['rightHipPitch', 'RightUpLeg', 'mixamorigRightUpLeg', 'Right_UpLeg', 'R_UpLeg', 'thigh.R', 'RightUpperLeg'],
+  rightHipYaw: ['rightHipYaw', 'RightHip', 'mixamorigRightUpLeg', 'Right_Hip', 'R_Hip'],
+  rightKnee: ['rightKnee', 'RightLeg', 'RightKnee', 'mixamorigRightLeg', 'Right_Leg', 'R_Leg', 'shin.R', 'RightLowerLeg'],
+  rightAnkle: ['rightAnkle', 'RightFoot', 'RightAnkle', 'mixamorigRightFoot', 'Right_Foot', 'R_Foot', 'foot.R'],
 }
 
 // 관절별 회전 축 및 방향 설정
@@ -98,10 +99,47 @@ export default function ExternalModel({
   const groupRef = useRef<THREE.Group>(null)
   const loadedUrlRef = useRef<string | null>(null)
 
-  // 본 찾기 함수 (Bone, SkinnedMesh skeleton, Object3D 순으로 탐색)
+  // 본 찾기 함수 (정확한 이름 매칭 우선 → substring 매칭 폴백)
   const findBone = useCallback((model: THREE.Group, patterns: string[]): THREE.Bone | THREE.Object3D | null => {
     let foundBone: THREE.Bone | THREE.Object3D | null = null
 
+    // === PASS 1: 정확한 이름 매칭 (exact match) ===
+    // 관절 이름과 동일한 본 이름을 최우선으로 찾음
+    for (const pattern of patterns) {
+      if (foundBone) break
+      model.traverse((child) => {
+        if (foundBone) return
+        if (child instanceof THREE.Bone && child.name === pattern) {
+          foundBone = child
+        }
+      })
+      if (foundBone) return foundBone
+
+      // SkinnedMesh skeleton에서도 정확 매칭
+      model.traverse((child) => {
+        if (foundBone) return
+        if (child instanceof THREE.SkinnedMesh && child.skeleton) {
+          for (const bone of child.skeleton.bones) {
+            if (bone.name === pattern) {
+              foundBone = bone
+              return
+            }
+          }
+        }
+      })
+      if (foundBone) return foundBone
+
+      // Object3D에서도 정확 매칭
+      model.traverse((child) => {
+        if (foundBone) return
+        if (child instanceof THREE.Object3D && !(child instanceof THREE.Mesh) && child.name === pattern) {
+          foundBone = child
+        }
+      })
+      if (foundBone) return foundBone
+    }
+
+    // === PASS 2: substring 매칭 (기존 방식 폴백) ===
     // 1. THREE.Bone 직접 탐색
     model.traverse((child) => {
       if (foundBone) return
