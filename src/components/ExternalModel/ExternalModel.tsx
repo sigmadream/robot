@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { GLTFLoader } from 'three-stdlib'
+import { GLTFLoader, SkeletonUtils } from 'three-stdlib'
 import { HumanoidJointAngles, HumanoidJointKey } from '@/lib/types/robot'
 
 // 본 이름 매핑 - 다양한 명명 규칙 지원
@@ -346,7 +346,7 @@ export default function ExternalModel({
     loader.load(
       url,
       (gltf) => {
-        const loadedModel = gltf.scene.clone()
+        const loadedModel = SkeletonUtils.clone(gltf.scene) as THREE.Group
 
         // 모델 중심점 계산 및 조정
         const box = new THREE.Box3().setFromObject(loadedModel)
